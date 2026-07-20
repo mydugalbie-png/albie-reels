@@ -1,0 +1,105 @@
+# Albie Reels Configuration
+app:
+  name: "Albie Reels"
+  version: "1.0.0"
+  timezone: "Europe/London"
+  log_level: "INFO"
+  data_dir: "./data"
+  assets_dir: "./assets/character_assets"
+  output_dir: "./output"
+  db_url: "sqlite+aiosqlite:///./data/albie_reels.db"
+
+scheduler:
+  runs_per_day: 5
+  max_posts_per_day: 2
+  schedule_times:
+    - "07:00"
+    - "11:00"
+    - "15:00"
+    - "19:00"
+    - "22:00"
+  auto_generate: true
+  auto_post: false
+  generate_only_mode: true
+  quick_mode: false
+
+research:
+  focus_topics:
+    - "Scottish politics"
+    - "SNP government failures"
+    - "UK immigration"
+    - "crime Scotland"
+    - "women's safety UK"
+    - "NHS Scotland"
+    - "Holyrood"
+    - "Scottish independence"
+    - "grooming gangs UK"
+    - "police Scotland"
+  max_stories_per_run: 8
+  avoid_repeat_hours: 24
+  min_satire_score: 6.5
+  sources_priority:
+    - "x"
+    - "newsapi"
+    - "duckduckgo"
+    - "rss"
+
+script:
+  target_duration_sec: 45
+  language: "en-GB"
+  dialect_options:
+    - "neutral"
+    - "scottish"
+    - "glaswegian"
+  tone: "sharp, savage, witty, fact-based satirical"
+  structure:
+    - "hook"
+    - "setup"
+    - "punchlines"
+    - "call_to_action"
+  max_words: 140
+
+visual:
+  aspect_ratio: "9:16"
+  resolution: [1080, 1920]
+  fps: 30
+  reference_images_dir: "./assets/character_assets"
+  image_gen_backend: "mock"
+  video_backend: "moviepy"
+  thumbnail_style: "bold text overlay + Albie reaction face"
+  albie_no_hat: true
+
+tts:
+  provider: "edge"
+  voice_id_elevenlabs: "onwK4e9ZLuTAKqWW03F9"
+  elevenlabs_model: "eleven_multilingual_v2"
+  scottish_voice_preference: true
+  speaking_rate: 1.05
+  emotion: "witty_sarcastic"
+  stability: 0.45
+  similarity_boost: 0.80
+  style: 0.35
+
+posting:
+  platforms:
+    - facebook
+    - youtube_shorts
+    - tiktok
+    - instagram_reels
+  prepare_drafts_only: true
+  delay_between_platforms_sec: 45
+  max_posts_per_day: 2
+  require_human_approval: true
+
+dashboard:
+  host: "0.0.0.0"
+  port: 7860
+  title: "Albie Reels Review Queue"
+  theme: "soft"
+  show_daily_summary: true
+
+safety:
+  human_approval_mandatory: true
+  log_all_generations: true
+  rate_limit_posts: true
+  tos_warnings_enabled: true
