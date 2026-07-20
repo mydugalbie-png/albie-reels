@@ -1,4 +1,4 @@
-"""Albie Reels Review Queue Dashboard – simple Gradio UI."""
+"""Albie Reels Review Queue Dashboard – Gradio UI."""
 from __future__ import annotations
 
 import asyncio
@@ -46,23 +46,26 @@ async def get_runs_for_day(day: str | None = None):
 
 
 def format_run_card(run: dict) -> str:
-    status_emoji = {
-        "ready_for_review": "YELLOW READY",
-        "approved": "GREEN APPROVED",
+    status_map = {
+        "ready_for_review": "READY FOR REVIEW",
+        "approved": "APPROVED",
         "posted": "POSTED",
         "discarded": "DISCARDED",
         "failed": "FAILED",
-    }.get(run["status"], run["status"])
-    return f"""### Run #{run['run_number']} — {status_emoji}
-**Story:** {run['title']}
-**Source:** {run['source']} | Satire: {run['satire_score']}
+    }
+    status = status_map.get(run["status"], run["status"])
+    return f"""### Run #{run['run_number']} — {status}
+**ID:** {run['id']}  
+**Story:** {run['title']}  
+**Source:** {run['source']} | Satire score: {run['satire_score']}  
 **Created:** {run['created_at']}
 
-**Script:**
+**Script preview:**
 ```
-{run['script'][:600]}{'...' if len(run['script'])>600 else ''}
+{run['script'][:700]}{'...' if len(run.get('script') or '') > 700 else ''}
 ```
-**Video:** `{run['video_path'] or 'not yet'}`
+**Video:** `{run['video_path'] or 'not generated'}`  
+**Thumbnail:** `{run['thumbnail_path'] or 'none'}`
 """
 
 
@@ -74,6 +77,8 @@ async def trigger_manual_run():
 
 
 async def approve_run(run_id: int):
+    if not run_id:
+        return "Enter a Run ID first"
     async with get_session() as session:
         result = await session.execute(select(Run).where(Run.id == int(run_id)))
         run = result.scalar_one_or_none()
@@ -86,6 +91,8 @@ async def approve_run(run_id: int):
 
 
 async def discard_run(run_id: int):
+    if not run_id:
+        return "Enter a Run ID first"
     async with get_session() as session:
         result = await session.execute(select(Run).where(Run.id == int(run_id)))
         run = result.scalar_one_or_none()
@@ -96,19 +103,41 @@ async def discard_run(run_id: int):
     return f"Run {run_id} discarded."
 
 
+async def post_run(run_id: int):
+    if not run_id:
+        return "Enter a Run ID first"
+    if settings.is_generate_only:
+        return "GENERATE_ONLY_MODE is on – posting is blocked for safety."
+    async with get_session() as session:
+        result = await session.execute(select(Run).where(Run.id == int(run_id)))
+        run = result.scalar_one_or_none()
+        if not run:
+            return "Run not found"
+        if run.status != RunStatus.APPROVED.value:
+            return "Only APPROVED runs can be posted. Approve it first."
+    # Stub posting
+    return f"Posting of run {run_id} simulated (real APIs not wired yet). Status remains APPROVED."
+
+
 def build_ui():
     with gr.Blocks(title="Albie Reels – Review Queue", theme=gr.themes.Soft(primary_hue="amber")) as demo:
-        gr.Markdown("# Albie Reels – Human Review Queue\n**Nothing is posted without your explicit approval.**")
+        gr.Markdown("# Albie Reels – Human Review Queue\n**Nothing is ever posted without your explicit approval.**")
+
         with gr.Row():
             day_input = gr.Textbox(label="Day (YYYY-MM-DD)", value=datetime.now().strftime("%Y-%m-%d"))
             refresh_btn = gr.Button("Refresh Queue", variant="primary")
             manual_run_btn = gr.Button("Trigger Manual Run Now")
+
         status_box = gr.Markdown("Ready.")
-        queue_md = gr.Markdown("Click Refresh to load runs.")
+        summary_md = gr.Markdown("")
+        queue_md = gr.Markdown("Click **Refresh Queue** to load today's runs.")
+
+        gr.Markdown("### Actions")
         run_id_input = gr.Number(label="Run ID to act on", precision=0)
         with gr.Row():
             approve_btn = gr.Button("Approve", variant="primary")
             discard_btn = gr.Button("Discard", variant="stop")
+            post_btn = gr.Button("Post (only if approved + safety off)")
 
         async def refresh(day):
             runs = await get_runs_for_day(day)
@@ -116,23 +145,41 @@ def build_ui():
                 return "No runs for this day yet. Trigger a manual run.", "No data."
             cards = "\n\n---\n\n".join(format_run_card(r) for r in runs)
             ready = sum(1 for r in runs if r["status"] == "ready_for_review")
-            return cards, f"**{day}** — Total: {len(runs)} | Ready: {ready}"
+            approved = sum(1 for r in runs if r["status"] == "approved")
+            posted = sum(1 for r in runs if r["status"] == "posted")
+            summary = f"**{day}** — Total: {len(runs)} | Ready: {ready} | Approved: {approved} | Posted: {posted}"
+            return cards, summary
 
-        refresh_btn.click(refresh, inputs=[day_input], outputs=[queue_md, status_box])
+        refresh_btn.click(refresh, inputs=[day_input], outputs=[queue_md, summary_md])
         manual_run_btn.click(trigger_manual_run, outputs=[status_box])
         approve_btn.click(approve_run, inputs=[run_id_input], outputs=[status_box])
         discard_btn.click(discard_run, inputs=[run_id_input], outputs=[status_box])
-        demo.load(refresh, inputs=[day_input], outputs=[queue_md, status_box])
+        post_btn.click(post_run, inputs=[run_id_input], outputs=[status_box])
+
+        demo.load(refresh, inputs=[day_input], outputs=[queue_md, summary_md])
+
     return demo
 
 
 def launch():
-    asyncio.get_event_loop().run_until_complete(init_db())
+    # Python 3.10+ safe way
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+
+    if loop and loop.is_running():
+        # Already inside an async context (rare)
+        asyncio.create_task(init_db())
+    else:
+        asyncio.run(init_db())
+
     demo = build_ui()
     demo.queue().launch(
-        server_name=settings.yaml_cfg.get("dashboard", {}).get("host", "0.0.0.0"),
+        server_name=settings.yaml_cfg.get("dashboard", {}).get("host", "127.0.0.1"),
         server_port=int(settings.yaml_cfg.get("dashboard", {}).get("port", 7860)),
         share=False,
+        inbrowser=True,
     )
 
 
