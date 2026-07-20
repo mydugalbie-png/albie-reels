@@ -147,13 +147,15 @@ class VisualAgent:
     def _assemble_video_ffmpeg(
         self, run_dir: Path, images: list[Path], audio: Path | None, script_data: dict
     ) -> Path | None:
+        """Reliable FFmpeg assembly using filter_complex (correct option order)."""
         out = run_dir / "reel_final.mp4"
         if not images:
             return None
 
-        list_file = run_dir / "concat.txt"
+        # Get audio duration
         audio_dur = 40.0
-        if audio and audio.exists() and audio.stat().st_size > 1000:
+        has_audio = audio and audio.exists() and audio.stat().st_size > 1000
+        if has_audio:
             try:
                 probe = subprocess.run(
                     ["ffprobe", "-v", "error", "-show_entries", "format=duration",
@@ -166,38 +168,48 @@ class VisualAgent:
 
         per = max(3.5, audio_dur / len(images))
 
-        with open(list_file, "w", encoding="utf-8") as f:
-            for img in images:
-                f.write(f"file '{img.resolve().as_posix()}'\n")
-                f.write(f"duration {per:.3f}\n")
-            f.write(f"file '{images[-1].resolve().as_posix()}'\n")
+        # Build input list: each image as a looped still
+        cmd = ["ffmpeg", "-y"]
+        for img in images:
+            cmd.extend(["-loop", "1", "-t", f"{per:.3f}", "-i", str(img.resolve())])
 
-        cmd = [
-            "ffmpeg", "-y",
-            "-f", "concat", "-safe", "0", "-i", str(list_file),
-            "-vsync", "vfr",
-            "-pix_fmt", "yuv420p",
-            "-vf", "scale=1080:1920:force_original_aspect_ratio=decrease,pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1",
+        if has_audio:
+            cmd.extend(["-i", str(audio.resolve())])
+
+        # Build filter_complex to scale + concat
+        n = len(images)
+        filters = []
+        for i in range(n):
+            filters.append(
+                f"[{i}:v]scale=1080:1920:force_original_aspect_ratio=decrease,"
+                f"pad=1080:1920:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30[v{i}]"
+            )
+        concat_inputs = "".join(f"[v{i}]" for i in range(n))
+        filters.append(f"{concat_inputs}concat=n={n}:v=1:a=0[vout]")
+
+        cmd.extend(["-filter_complex", ";".join(filters)])
+        cmd.extend(["-map", "[vout]"])
+
+        if has_audio:
+            cmd.extend(["-map", f"{n}:a", "-c:a", "aac", "-b:a", "192k", "-shortest"])
+
+        cmd.extend([
             "-c:v", "libx264", "-preset", "fast", "-crf", "20",
+            "-pix_fmt", "yuv420p",
             "-r", "30",
-        ]
-
-        if audio and audio.exists() and audio.stat().st_size > 1000:
-            cmd.extend(["-i", str(audio), "-c:a", "aac", "-b:a", "192k", "-shortest"])
-        else:
-            cmd.extend(["-an"])
-
-        cmd.append(str(out))
+            str(out),
+        ])
 
         try:
             logger.info("Assembling video with FFmpeg…")
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
             if result.returncode != 0:
-                logger.error("FFmpeg failed: {}", result.stderr[-800:])
+                logger.error("FFmpeg failed:\n{}", result.stderr[-1200:])
                 return None
             if out.exists() and out.stat().st_size > 10000:
                 logger.success("Video ready → {} ({:.1f} KB)", out, out.stat().st_size / 1024)
                 return out
+            logger.error("Video file missing or too small")
             return None
         except Exception as e:
             logger.error("Assembly exception: {}", e)
